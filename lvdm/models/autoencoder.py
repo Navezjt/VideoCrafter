@@ -1,12 +1,14 @@
-import torch
-import pytorch_lightning as pl
-import torch.nn.functional as F
 import os
+from contextlib import contextmanager
+import torch
+import numpy as np
 from einops import rearrange
+import torch.nn.functional as F
+import pytorch_lightning as pl
+from lvdm.modules.networks.ae_modules import Encoder, Decoder
+from lvdm.distributions import DiagonalGaussianDistribution
+from utils.utils import instantiate_from_config
 
-from lvdm.models.modules.autoencoder_modules import Encoder, Decoder
-from lvdm.models.modules.distributions import DiagonalGaussianDistribution
-from lvdm.utils.common_utils import instantiate_from_config
 
 class AutoencoderKL(pl.LightningModule):
     def __init__(self,
@@ -69,12 +71,12 @@ class AutoencoderKL(pl.LightningModule):
         if self.test_args.save_input:
             os.makedirs(self.root_inputs, exist_ok=True)
         assert(self.test_args is not None)
-        self.test_maximum = getattr(self.test_args, 'test_maximum', None) #1500 # 12000/8
+        self.test_maximum = getattr(self.test_args, 'test_maximum', None) 
         self.count = 0
         self.eval_metrics = {}
         self.decodes = []
         self.save_decode_samples = 2048
-        
+
     def init_from_ckpt(self, path, ignore_keys=list()):
         sd = torch.load(path, map_location="cpu")
         try:
@@ -115,10 +117,6 @@ class AutoencoderKL(pl.LightningModule):
 
     def get_input(self, batch, k):
         x = batch[k]
-        # if len(x.shape) == 3:
-        #     x = x[..., None]
-        # if x.dim() == 4:
-        #     x = x.permute(0, 3, 1, 2).to(memory_format=torch.contiguous_format).float()
         if x.dim() == 5 and self.input_dim == 4:
             b,c,t,h,w = x.shape
             self.b = b
@@ -199,4 +197,23 @@ class AutoencoderKL(pl.LightningModule):
             self.register_buffer("colorize", torch.randn(3, x.shape[1], 1, 1).to(x))
         x = F.conv2d(x, weight=self.colorize)
         x = 2.*(x-x.min())/(x.max()-x.min()) - 1.
+        return x
+
+class IdentityFirstStage(torch.nn.Module):
+    def __init__(self, *args, vq_interface=False, **kwargs):
+        self.vq_interface = vq_interface  # TODO: Should be true by default but check to not break older stuff
+        super().__init__()
+
+    def encode(self, x, *args, **kwargs):
+        return x
+
+    def decode(self, x, *args, **kwargs):
+        return x
+
+    def quantize(self, x, *args, **kwargs):
+        if self.vq_interface:
+            return x, None, [None, None, None]
+        return x
+
+    def forward(self, x, *args, **kwargs):
         return x
